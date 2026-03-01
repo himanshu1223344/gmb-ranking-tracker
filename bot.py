@@ -43,11 +43,17 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error: {str(e)}")
 
-def main():
+async def main():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("check", check))
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    await asyncio.sleep(float('inf'))
+    await application.updater.stop()
+    await application.stop()
+    await application.shutdown()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
