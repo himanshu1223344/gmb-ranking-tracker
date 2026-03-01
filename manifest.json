@@ -1,0 +1,108 @@
+{
+  "manifest_version": 3,
+  "name": "GMB Ranking Tracker Pro",
+  "version": "3.2.0",
+  "description": "Professional Google My Business ranking tracker for agencies managing 200+ businesses and 1000+ keywords with automated daily checks and alerts",
+  "author": "Your Agency Name",
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "GMB Ranking Tracker - Open Side Panel"
+  },
+
+  "side_panel": {
+    "default_path": "popup/popup.html"
+  },
+
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.google.com/search*",
+        "https://www.google.co.in/search*",
+        "https://www.google.co.uk/search*",
+        "https://www.google.com/maps*",
+        "https://www.google.co.in/maps*",
+        "https://www.google.com/localservices*",
+        "https://www.google.co.in/localservices*"
+      ],
+      "js": [
+        "content/content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "tabs",
+    "scripting",
+    "notifications",
+    "activeTab",
+    "sidePanel"
+  ],
+
+  "host_permissions": [
+    "https://www.google.com/*",
+    "https://www.google.co.in/*",
+    "https://www.google.co.uk/*",
+    "https://*.google.com/*"
+  ],
+
+  "options_page": "options/options.html",
+
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+G",
+        "mac": "Command+Shift+G"
+      },
+      "description": "Toggle GMB Ranking Tracker Side Panel"
+    },
+    "open_settings": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Open Auto-Check Settings"
+    }
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/*",
+        "reports/*",
+        "popup/popup.html",
+        "popup/popup.css",
+        "popup/popup.js",
+        "settings/settings.html",
+        "settings/settings.js",
+        "content/content.js"
+      ],
+      "matches": [
+        "https://www.google.com/*",
+        "https://www.google.co.in/*",
+        "https://*.google.com/*",
+        "<all_urls>"
+      ]
+    }
+  ]
+}

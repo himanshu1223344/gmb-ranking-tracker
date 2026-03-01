@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GMB Ranking Tracker Pro - Side Panel</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="side-panel-mode">
+  
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <div class="header-left">
+        <img src="../icons/icon48.png" alt="GMB Tracker Logo" class="logo">
+        <div class="header-text">
+          <h1 class="header-title">GMB Ranking Tracker</h1>
+          <p class="header-subtitle">Professional Edition v3.2</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="refresh-results" class="icon-btn" title="Refresh Results">
+          <span>🔄</span>
+        </button>
+        <button id="settings-btn" class="icon-btn" title="Settings">
+          <span>⚙️</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    
+    <!-- Quick Check Section -->
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">
+          <span class="card-icon">🎯</span>
+          Quick Ranking Check
+        </h2>
+        <div class="card-badge">Single</div>
+      </div>
+      <div class="card-body">
+        <form id="quick-check-form" class="form">
+          <div class="form-group">
+            <label for="business-name" class="form-label">
+              Business Name <span class="required">*</span>
+            </label>
+            <input 
+              type="text" 
+              id="business-name" 
+              class="form-input" 
+              placeholder="e.g., Digiscrub - Healthcare Digital Marketing Agency"
+              required
+              autocomplete="off"
+            >
+            <span class="form-hint">Enter the exact business name as shown on Google</span>
+          </div>
+
+          <div class="form-group">
+            <label for="place-id" class="form-label">
+              Place ID (Optional)
+              <span class="help-badge" title="Provides 100% accuracy">⭐ Recommended</span>
+            </label>
+            <input 
+              type="text" 
+              id="place-id" 
+              class="form-input" 
+              placeholder="ChIJ... or 0x... or numeric CID"
+              autocomplete="off"
+            >
+            <span class="form-hint">Get from Google Maps URL for 100% accurate matching</span>
+          </div>
+
+          <div class="form-group">
+            <label for="keyword" class="form-label">
+              Search Keyword <span class="required">*</span>
+            </label>
+            <input 
+              type="text" 
+              id="keyword" 
+              class="form-input" 
+              placeholder="e.g., digital marketing agency"
+              required
+              autocomplete="off"
+            >
+            <span class="form-hint">The keyword customers search for</span>
+          </div>
+
+          <div class="form-group">
+            <label for="location" class="form-label">Location</label>
+            <input 
+              type="text" 
+              id="location" 
+              class="form-input" 
+              placeholder="e.g., Mumbai"
+              autocomplete="off"
+            >
+            <span class="form-hint">City or area to search in</span>
+          </div>
+
+          <button type="submit" id="check-btn" class="btn btn-primary btn-block">
+            <span class="btn-text">🔍 Check Ranking Now</span>
+            <span class="btn-loader" style="display: none;">
+              <span class="spinner">⏳</span>
+              Checking...
+            </span>
+          </button>
+        </form>
+
+        <!-- Result Display -->
+        <div id="result" class="result-container" style="display: none;">
+          <div id="result-content" class="result-content"></div>
+        </div>
+
+        <!-- ✅ NEW: Live Progress Display - Will be dynamically inserted here by popup.js -->
+      </div>
+    </section>
+
+    <!-- Bulk Upload Section -->
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">
+          <span class="card-icon">📊</span>
+          Bulk Ranking Check
+        </h2>
+        <div class="card-badge">CSV Upload</div>
+      </div>
+      <div class="card-body">
+        <div class="bulk-info">
+          <div class="info-box">
+            <div class="info-icon">💡</div>
+            <div class="info-content">
+              <strong>CSV Format Required:</strong>
+              <code>business_name, place_id, keyword, location</code>
+            </div>
+          </div>
+          <a href="#" id="download-template" class="link-btn">
+            📥 Download CSV Template
+          </a>
+        </div>
+
+        <div class="file-upload-section">
+          <input 
+            type="file" 
+            id="csv-upload" 
+            accept=".csv"
+            class="file-input"
+          >
+          <label for="csv-upload" class="file-label">
+            <div class="file-label-content">
+              <span class="file-icon">📂</span>
+              <span id="file-name" class="file-name">Choose CSV file...</span>
+            </div>
+            <span class="file-label-btn">Browse</span>
+          </label>
+        </div>
+        
+        <button id="start-bulk" class="btn btn-secondary btn-block" disabled>
+          <span class="btn-text">📤 Start Bulk Check</span>
+        </button>
+        
+        <!-- Progress Bar -->
+        <div id="progress-container" class="progress-container" style="display: none;">
+          <div class="progress-header">
+            <span class="progress-label">Processing Keywords...</span>
+            <span id="progress-percent" class="progress-percent">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+          <div class="progress-footer">
+            <span id="progress-text" class="progress-text">0 / 0 completed</span>
+            <button id="cancel-bulk" class="btn btn-danger btn-sm">
+              ✖️ Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Recent Results Section -->
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">
+          <span class="card-icon">📈</span>
+          Recent Results
+        </h2>
+        <div class="card-actions">
+          <button id="export-btn" class="btn btn-outline btn-sm">
+            💾 Export
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="results-list" class="results-list">
+          <!-- Results will be inserted here by JavaScript -->
+        </div>
+        
+        <div id="no-results" class="no-results" style="display: none;">
+          <div class="no-results-content">
+            <div class="no-results-icon">📭</div>
+            <h3 class="no-results-title">No Results Yet</h3>
+            <p class="no-results-text">Start your first ranking check above to see results here</p>
+          </div>
+        </div>
+        
+        <button id="view-all-btn" class="btn btn-outline btn-block" style="margin-top: 16px;">
+          📋 View All Historical Results
+        </button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-content">
+      <div class="footer-info">
+        <span class="footer-version">GMB Ranking Tracker Pro v3.2 🚀</span>
+        <span class="footer-separator">•</span>
+        <span class="footer-mode">Live Progress Enabled</span>
+      </div>
+      <div class="footer-links">
+        <a href="#" id="help-link" class="footer-link">Help</a>
+        <a href="#" id="about-link" class="footer-link">About</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,1305 @@
+// Background Service Worker for GMB Ranking Tracker Pro v5.7 - LOCAL SEARCH MODE
+'use strict';
+
+console.log('🚀 GMB Service Worker v5.7 Started - Local Search Mode! 🚀');
+
+// ============================================
+// 🧠 VISIBLE WINDOW CONFIG
+// ============================================
+
+const CONFIG = {
+  MAX_SERVICE_WORKER_LIFETIME: 25000,
+  MIN_DELAY_BETWEEN_REQUESTS: 20000,
+  MAX_DELAY_BETWEEN_REQUESTS: 35000,
+  MAX_RETRIES: 2,
+  FETCH_TIMEOUT: 60000,
+  MAX_RESULTS_TO_CHECK: 100,
+  RESULTS_PER_PAGE: 20,
+  
+  // Human behavior
+  HUMAN_READING_TIME_MIN: 8000,
+  HUMAN_READING_TIME_MAX: 15000,
+  INITIAL_WARMUP_DELAY: 10000,
+  SESSION_MAX_REQUESTS: 12,
+  SESSION_BREAK_MIN: 180000,
+  SESSION_BREAK_MAX: 360000,
+  
+  // ✅ VISIBLE WINDOW SETTINGS
+  USE_INCOGNITO: false,
+  SHOW_WINDOW_VISIBLE: true,
+  WINDOW_STATE: 'normal',
+  FOCUS_WINDOW: false,
+  CLOSE_TAB_AFTER_SEARCH: true,
+  TAB_CLOSE_DELAY: 3000,
+  CLOSE_INCOGNITO_WINDOW: true,
+  
+  // ✅ CAPTCHA SETTINGS
+  ENABLE_MANUAL_CAPTCHA: true,
+  CAPTCHA_DETECTION_TIMEOUT: 5000,
+  CAPTCHA_SOLVE_TIMEOUT: 300000,
+  SHOW_WINDOW_ON_CAPTCHA: true,
+  PAUSE_ON_CAPTCHA: true,
+  
+  // ✅ NEW: SEARCH MODE
+  SEARCH_MODE: 'local' // 'local' or 'web'
+};
+
+// Session state
+let currentSession = {
+  id: null,
+  requestCount: 0,
+  startTime: null
+};
+
+// Persistent state
+let bulkOperationInProgress = false;
+let bulkQueue = [];
+let processedCount = 0;
+let activeIncognitoWindows = new Set();
+let activeSearchTabs = new Set();
+let captchaSolvingInProgress = false;
+let currentCaptchaWindow = null;
+
+function log(level, message, data) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${level}] ${timestamp}:`, message, data || '');
+}
+
+log('INFO', 'Service worker initialized - Local Search Mode');
+
+// ============================================
+// 🧠 HUMAN BEHAVIOR FUNCTIONS
+// ============================================
+
+function getRandomUserAgent() {
+  const agents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0'
+  ];
+  return agents[Math.floor(Math.random() * agents.length)];
+}
+
+async function simulateHumanDelay(action = 'reading') {
+  let delay;
+  switch(action) {
+    case 'reading':
+      delay = randomBetween(CONFIG.HUMAN_READING_TIME_MIN, CONFIG.HUMAN_READING_TIME_MAX);
+      log('DEBUG', `👤 Reading time: ${Math.round(delay/1000)}s`);
+      break;
+    case 'scrolling':
+      delay = randomBetween(2000, 4000);
+      log('DEBUG', `👤 Scrolling: ${Math.round(delay/1000)}s`);
+      break;
+    default:
+      delay = randomBetween(3000, 6000);
+  }
+  await new Promise(resolve => setTimeout(resolve, delay));
+}
+
+function initializeSession() {
+  currentSession = {
+    id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    requestCount: 0,
+    startTime: Date.now()
+  };
+  log('INFO', `🔐 New session: ${currentSession.id}`);
+}
+
+function shouldTakeSessionBreak() {
+  return currentSession.requestCount >= CONFIG.SESSION_MAX_REQUESTS;
+}
+
+async function takeSessionBreak() {
+  const breakDuration = randomBetween(CONFIG.SESSION_BREAK_MIN, CONFIG.SESSION_BREAK_MAX);
+  log('INFO', `☕ Session break: ${Math.round(breakDuration/60000)} minutes`);
+  
+  await chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: '☕ Taking a Break',
+    message: `${Math.round(breakDuration/60000)} min break to avoid detection...`
+  }).catch(() => {});
+  
+  await new Promise(resolve => setTimeout(resolve, breakDuration));
+  initializeSession();
+}
+
+async function restoreState() {
+  try {
+    const session = await chrome.storage.session.get(['bulkState']);
+    if (session.bulkState) {
+      bulkOperationInProgress = session.bulkState.inProgress || false;
+      processedCount = session.bulkState.processedCount || 0;
+      log('INFO', 'Restored state', session.bulkState);
+    }
+  } catch (error) {
+    log('WARN', 'Could not restore state', error.message);
+  }
+}
+
+async function saveState() {
+  try {
+    await chrome.storage.session.set({
+      bulkState: {
+        inProgress: bulkOperationInProgress,
+        processedCount: processedCount,
+        timestamp: Date.now()
+      }
+    });
+  } catch (error) {
+    log('WARN', 'Could not save state', error.message);
+  }
+}
+
+async function checkIncognitoAccess() {
+  return new Promise((resolve) => {
+    chrome.extension.isAllowedIncognitoAccess((isAllowed) => {
+      if (!isAllowed && CONFIG.USE_INCOGNITO) {
+        log('WARN', '⚠️ Incognito access not enabled!');
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: '⚠️ Enable Incognito Access',
+          message: 'Go to chrome://extensions/ → GMB Tracker → Enable "Allow in incognito"'
+        }).catch(() => {});
+      }
+      resolve(isAllowed);
+    });
+  });
+}
+
+restoreState();
+initializeSession();
+
+// ============================================
+// SIDE PANEL SUPPORT
+// ============================================
+
+chrome.action.onClicked.addListener(async (tab) => {
+  try {
+    await chrome.sidePanel.open({ windowId: tab.windowId });
+    log('INFO', 'Side panel opened');
+  } catch (error) {
+    log('ERROR', 'Failed to open side panel', error.message);
+    try {
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: 'GMB Ranking Tracker',
+        message: 'Look for the side panel on the right.'
+      });
+    } catch (e) {}
+  }
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  
+  if (tab.url && (
+    tab.url.includes('google.com/search') ||
+    tab.url.includes('google.co.in/search') ||
+    tab.url.includes('google.com/maps')
+  )) {
+    try {
+      await chrome.sidePanel.setOptions({
+        tabId: tabId,
+        path: 'popup/popup.html',
+        enabled: true
+      });
+    } catch (e) {}
+  }
+});
+
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+// ============================================
+// MESSAGE HANDLERS
+// ============================================
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  log('INFO', 'Message received', { action: request.action });
+
+  try {
+    if (request.action === 'contentScriptReady') {
+      sendResponse({ success: true, message: 'Acknowledged' });
+      return false;
+    }
+
+    if (request.action === 'quickRankingCheck') {
+      handleQuickRankingCheck(request.data, sendResponse);
+      return true;
+    }
+
+    if (request.action === 'bulkRankingCheck') {
+      handleBulkRankingCheck(request.data, sendResponse);
+      return true;
+    }
+
+    if (request.action === 'cancelBulk') {
+      handleCancelBulk(sendResponse);
+      return true;
+    }
+
+    if (request.action === 'exportCSV') {
+      handleExportCSV(sendResponse);
+      return true;
+    }
+
+    if (request.action === 'getStats') {
+      handleGetStats(sendResponse);
+      return true;
+    }
+
+    // 🚀 NEW: QUICK TRACK HANDLER
+    if (request.action === 'startQuickTrack') {
+      handleQuickTrack(request.data, sendResponse);
+      return true;
+    }
+
+    sendResponse({ success: false, error: 'Unknown action' });
+    return false;
+
+  } catch (error) {
+    log('ERROR', 'Error handling message', error);
+    sendResponse({ success: false, error: error.message });
+    return false;
+  }
+});
+
+function sendLiveProgress(data) {
+  try {
+    chrome.runtime.sendMessage({ action: 'liveProgress', data: data });
+  } catch (e) {}
+}
+
+// ============================================
+// 🚀 QUICK TRACK HANDLER - NEW FEATURE
+// ============================================
+
+async function handleQuickTrack(data, sendResponse) {
+  const { businessName, placeId, keyword, location } = data;
+  
+  log('INFO', '🚀 Quick Track started', { businessName, placeId, keyword, location });
+  
+  try {
+    // Validate input
+    if (!businessName || !placeId || !keyword || !location) {
+      throw new Error('Missing required data for Quick Track');
+    }
+    
+    // Use the same search logic as regular check
+    const searchQuery = keyword + (location ? ' ' + location : '');
+    let allBusinesses = [];
+    let currentPage = 1;
+    let foundMatch = null;
+    
+    log('INFO', '🔍 Starting Quick Track search...');
+    
+    // Send initial response
+    sendResponse({ success: true, message: 'Quick Track started' });
+    
+    // Check first 2 pages
+    const maxPages = 2;
+    
+    while (!foundMatch && currentPage <= maxPages) {
+      log('INFO', `📄 Quick Track - Checking page ${currentPage}`);
+      
+      const start = (currentPage - 1) * CONFIG.RESULTS_PER_PAGE;
+      
+      const { windowId, tabId } = await createVisibleIncognitoWindow(searchQuery, start);
+      
+      await simulateHumanDelay('reading');
+      
+      const html = await getHTMLFromTabWithCaptchaCheck(tabId, windowId, keyword);
+      
+      await closeIncognitoWindow(windowId);
+      
+      const pageBusinesses = extractBusinessesFromHTML(html, 'quick');
+      
+      if (pageBusinesses.length === 0) {
+        break;
+      }
+      
+      const adjustedBusinesses = pageBusinesses.map(b => {
+        const absolutePosition = b.position + (currentPage - 1) * CONFIG.RESULTS_PER_PAGE;
+        const correctPage = Math.ceil(absolutePosition / CONFIG.RESULTS_PER_PAGE);
+        return { ...b, position: absolutePosition, page: correctPage };
+      });
+      
+      allBusinesses = allBusinesses.concat(adjustedBusinesses);
+      
+      const match = findBusinessMatch(adjustedBusinesses, businessName, placeId);
+      if (match) {
+        foundMatch = match;
+        log('INFO', `✅ Quick Track FOUND at position #${match.position}`);
+        break;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, randomBetween(3000, 6000)));
+      currentPage++;
+    }
+    
+    // Save result
+    const resultData = {
+      found: !!foundMatch,
+      totalChecked: allBusinesses.length,
+      organicPosition: foundMatch ? foundMatch.position : null,
+      page: foundMatch ? foundMatch.page : null,
+      confidence: foundMatch ? foundMatch.confidence : 100,
+      matchMethod: foundMatch ? foundMatch.method : 'not_found',
+      businessName,
+      placeId: placeId || null,
+      keyword,
+      location: location || '',
+      matchedName: foundMatch ? foundMatch.name : null,
+      rating: foundMatch ? foundMatch.rating : null,
+      reviewCount: foundMatch ? foundMatch.reviewCount : null,
+      timestamp: Date.now(),
+      pagesChecked: currentPage,
+      source: 'quick_track'
+    };
+    
+    // Save to storage
+    const resultKey = `ranking_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    await chrome.storage.local.set({ [resultKey]: resultData });
+    
+    // Show notification
+    if (foundMatch) {
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: '✅ Quick Track Complete!',
+        message: `${businessName}\nFound at position #${foundMatch.position}`
+      }).catch(() => {});
+    } else {
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: '❌ Not Found',
+        message: `${businessName} not found in top ${maxPages * 20} results`
+      }).catch(() => {});
+    }
+    
+    // Send message to options page
+    chrome.runtime.sendMessage({ 
+      action: 'quickTrackComplete', 
+      data: resultData 
+    }).catch(() => {});
+    
+    log('INFO', '✅ Quick Track complete', resultData);
+    
+  } catch (error) {
+    log('ERROR', 'Quick Track failed', error.message);
+    
+    await chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: '❌ Quick Track Failed',
+      message: error.message
+    }).catch(() => {});
+    
+    chrome.runtime.sendMessage({ 
+      action: 'quickTrackError', 
+      data: { error: error.message } 
+    }).catch(() => {});
+  }
+}
+
+// ============================================
+// ✅ CAPTCHA DETECTION
+// ============================================
+
+async function detectCaptcha(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        const captchaIndicators = [
+          document.querySelector('iframe[src*="recaptcha"]'),
+          document.querySelector('iframe[src*="google.com/recaptcha"]'),
+          document.querySelector('#captcha'),
+          document.querySelector('.g-recaptcha'),
+          document.getElementById('recaptcha'),
+          document.querySelector('[aria-label*="reCAPTCHA"]'),
+          document.body.innerText.includes('unusual traffic'),
+          document.body.innerText.includes('I\'m not a robot'),
+          document.body.innerText.includes('verify you\'re not a robot')
+        ];
+        
+        const hasCaptcha = captchaIndicators.some(indicator => indicator);
+        
+        return {
+          hasCaptcha: hasCaptcha,
+          pageTitle: document.title,
+          pageUrl: window.location.href
+        };
+      }
+    });
+    
+    if (results && results[0] && results[0].result) {
+      return results[0].result;
+    }
+    
+    return { hasCaptcha: false };
+  } catch (error) {
+    log('ERROR', 'CAPTCHA detection failed', error.message);
+    return { hasCaptcha: false };
+  }
+}
+
+// ============================================
+// ✅ SHOW WINDOW FOR MANUAL CAPTCHA SOLVING
+// ============================================
+
+async function showWindowForCaptcha(windowId, keyword) {
+  log('INFO', '🤖 CAPTCHA detected! Showing window for manual solving...');
+  
+  captchaSolvingInProgress = true;
+  currentCaptchaWindow = windowId;
+  
+  await chrome.windows.update(windowId, {
+    focused: true,
+    state: 'normal',
+    drawAttention: true
+  });
+  
+  await chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: '🤖 CAPTCHA Detected!',
+    message: `Please solve CAPTCHA for keyword: "${keyword}"\nYou have 5 minutes...`,
+    requireInteraction: true,
+    priority: 2
+  });
+  
+  sendLiveProgress({
+    status: 'captcha_detected',
+    message: `🤖 CAPTCHA detected for "${keyword}". Please solve it manually...`,
+    keyword: keyword
+  });
+  
+  return new Promise(async (resolve, reject) => {
+    const startTime = Date.now();
+    
+    const checkInterval = setInterval(async () => {
+      try {
+        const tabs = await chrome.tabs.query({ windowId: windowId });
+        if (tabs.length === 0) {
+          clearInterval(checkInterval);
+          reject(new Error('Window closed'));
+          return;
+        }
+        
+        const tabId = tabs[0].id;
+        const captchaStatus = await detectCaptcha(tabId);
+        
+        if (!captchaStatus.hasCaptcha) {
+          clearInterval(checkInterval);
+          captchaSolvingInProgress = false;
+          currentCaptchaWindow = null;
+          
+          log('INFO', '✅ CAPTCHA solved!');
+          
+          await chrome.notifications.create({
+            type: 'basic',
+            iconUrl: 'icons/icon48.png',
+            title: '✅ CAPTCHA Solved!',
+            message: 'Continuing with ranking check...'
+          });
+          
+          sendLiveProgress({
+            status: 'captcha_solved',
+            message: `✅ CAPTCHA solved! Continuing...`,
+            keyword: keyword
+          });
+          
+          resolve(true);
+        }
+        
+        if (Date.now() - startTime > CONFIG.CAPTCHA_SOLVE_TIMEOUT) {
+          clearInterval(checkInterval);
+          captchaSolvingInProgress = false;
+          currentCaptchaWindow = null;
+          reject(new Error('CAPTCHA solve timeout'));
+        }
+      } catch (error) {
+        clearInterval(checkInterval);
+        captchaSolvingInProgress = false;
+        currentCaptchaWindow = null;
+        reject(error);
+      }
+    }, 2000);
+  });
+}
+
+// ============================================
+// ✅ CREATE VISIBLE WINDOW - LOCAL SEARCH
+// ============================================
+
+async function createVisibleIncognitoWindow(searchQuery, start = 0) {
+  // ✅ UPDATED: Use LOCAL search mode (tbm=lcl) like your screenshot
+  const searchUrl = `https://www.google.co.in/search?q=${encodeURIComponent(searchQuery)}&tbm=lcl&start=${start}`;
+  
+  log('INFO', `🗺️ Opening LOCAL search window: ${searchUrl}`);
+  
+  const hasAccess = await checkIncognitoAccess();
+  
+  if (!hasAccess && CONFIG.USE_INCOGNITO) {
+    log('WARN', 'Incognito access denied, falling back to normal mode');
+  }
+  
+  const window = await chrome.windows.create({
+    url: searchUrl,
+    incognito: CONFIG.USE_INCOGNITO && hasAccess,
+    focused: CONFIG.FOCUS_WINDOW,
+    state: CONFIG.WINDOW_STATE,
+    width: 1200,
+    height: 800,
+    left: 100,
+    top: 100
+  });
+  
+  activeIncognitoWindows.add(window.id);
+  
+  if (window.tabs && window.tabs[0]) {
+    activeSearchTabs.add(window.tabs[0].id);
+    return { windowId: window.id, tabId: window.tabs[0].id };
+  }
+  
+  throw new Error('Failed to create visible window');
+}
+
+// ============================================
+// ✅ GET HTML - SIMPLE & RELIABLE
+// ============================================
+
+async function getHTMLFromTabWithCaptchaCheck(tabId, windowId, keyword) {
+  try {
+    log('DEBUG', '⏳ Waiting for page to load...');
+    
+    let isReady = false;
+    let attempts = 0;
+    const maxAttempts = 60;
+    
+    while (!isReady && attempts < maxAttempts) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        
+        if (tab.status === 'complete' && tab.url && !tab.url.includes('chrome://')) {
+          isReady = true;
+          log('DEBUG', `✅ Page ready: ${tab.url}`);
+          break;
+        }
+        
+        log('DEBUG', `⏳ Loading... Status: ${tab.status}, Attempt: ${attempts + 1}/${maxAttempts}`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+        
+      } catch (error) {
+        log('ERROR', 'Tab access error', error.message);
+        throw new Error('Tab was closed or inaccessible');
+      }
+    }
+    
+    if (!isReady) {
+      throw new Error('Timeout: Page did not load in 60 seconds');
+    }
+    
+    log('DEBUG', '⏳ Waiting for page rendering...');
+    await new Promise(resolve => setTimeout(resolve, CONFIG.CAPTCHA_DETECTION_TIMEOUT));
+    
+    log('DEBUG', 'Checking for CAPTCHA...');
+    const captchaStatus = await detectCaptcha(tabId);
+    
+    if (captchaStatus.hasCaptcha && CONFIG.ENABLE_MANUAL_CAPTCHA) {
+      log('WARN', '🤖 CAPTCHA detected!');
+      await showWindowForCaptcha(windowId, keyword);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+    
+    log('DEBUG', 'Extracting HTML...');
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => document.documentElement.outerHTML
+    });
+    
+    if (!results || !results[0] || !results[0].result) {
+      throw new Error('Could not extract HTML from page');
+    }
+    
+    const htmlLength = results[0].result.length;
+    log('DEBUG', `✅ Got HTML: ${htmlLength} characters`);
+    
+    if (htmlLength < 1000) {
+      log('WARN', '⚠️ HTML too short - might be error page');
+    }
+    
+    return results[0].result;
+    
+  } catch (error) {
+    log('ERROR', 'Failed to get HTML', error.message);
+    throw error;
+  }
+}
+
+// ============================================
+// ✅ CLOSE WINDOW
+// ============================================
+
+async function closeIncognitoWindow(windowId) {
+  if (CONFIG.CLOSE_INCOGNITO_WINDOW) {
+    await new Promise(resolve => setTimeout(resolve, CONFIG.TAB_CLOSE_DELAY));
+    try {
+      await chrome.windows.remove(windowId);
+      activeIncognitoWindows.delete(windowId);
+      log('DEBUG', `🗑️ Closed window: ${windowId}`);
+    } catch (error) {
+      log('WARN', `Could not close window ${windowId}`);
+    }
+  }
+}
+
+// ============================================
+// SINGLE MODE WITH VISIBLE WINDOW
+// ============================================
+
+async function handleQuickRankingCheck(data, sendResponse) {
+  const { businessName, placeId, keyword, location } = data;
+  
+  log('INFO', '🔍 Starting ranking check (LOCAL SEARCH)', { businessName, keyword });
+
+  try {
+    if (shouldTakeSessionBreak()) {
+      await takeSessionBreak();
+    }
+    
+    const searchQuery = keyword + (location ? ' ' + location : '');
+    let allBusinesses = [];
+    let currentPage = 1;
+    let foundMatch = null;
+    
+    sendLiveProgress({
+      status: 'searching',
+      message: 'Starting local search...',
+      currentPage: 0,
+      totalBusinesses: 0,
+      businesses: []
+    });
+    
+    while (!foundMatch && allBusinesses.length < CONFIG.MAX_RESULTS_TO_CHECK) {
+      log('INFO', `📄 Checking page ${currentPage}`);
+      
+      sendLiveProgress({
+        status: 'checking_page',
+        message: `Checking page ${currentPage} of local results...`,
+        currentPage: currentPage,
+        totalBusinesses: allBusinesses.length,
+        businesses: allBusinesses
+      });
+      
+      const start = (currentPage - 1) * CONFIG.RESULTS_PER_PAGE;
+      
+      const { windowId, tabId } = await createVisibleIncognitoWindow(searchQuery, start);
+      
+      await simulateHumanDelay('reading');
+      
+      const html = await getHTMLFromTabWithCaptchaCheck(tabId, windowId, keyword);
+      
+      await closeIncognitoWindow(windowId);
+      
+      const pageBusinesses = extractBusinessesFromHTML(html, 'single');
+      
+      if (pageBusinesses.length === 0) {
+        break;
+      }
+      
+      const adjustedBusinesses = pageBusinesses.map(b => {
+        const absolutePosition = b.position + (currentPage - 1) * CONFIG.RESULTS_PER_PAGE;
+        const correctPage = Math.ceil(absolutePosition / CONFIG.RESULTS_PER_PAGE);
+        return { ...b, position: absolutePosition, page: correctPage };
+      });
+      
+      allBusinesses = allBusinesses.concat(adjustedBusinesses);
+      
+      sendLiveProgress({
+        status: 'found_results',
+        message: `Found ${adjustedBusinesses.length} local businesses`,
+        currentPage: currentPage,
+        totalBusinesses: allBusinesses.length,
+        businesses: allBusinesses,
+        latestPage: adjustedBusinesses
+      });
+      
+      const match = findBusinessMatch(adjustedBusinesses, businessName, placeId);
+      if (match) {
+        foundMatch = match;
+        log('INFO', `✅ FOUND at position #${match.position}`);
+        
+        sendLiveProgress({
+          status: 'found',
+          message: `✅ FOUND at #${match.position}`,
+          currentPage: currentPage,
+          totalBusinesses: allBusinesses.length,
+          businesses: allBusinesses,
+          foundMatch: match
+        });
+        break;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, randomBetween(5000, 10000)));
+      currentPage++;
+    }
+    
+    if (!foundMatch && allBusinesses.length > 0) {
+      sendLiveProgress({
+        status: 'not_found',
+        message: `❌ Not found in ${allBusinesses.length} results`,
+        currentPage: currentPage,
+        totalBusinesses: allBusinesses.length,
+        businesses: allBusinesses
+      });
+    }
+    
+    const resultData = {
+      found: !!foundMatch,
+      totalChecked: allBusinesses.length,
+      organicPosition: foundMatch ? foundMatch.position : null,
+      page: foundMatch ? foundMatch.page : null,
+      confidence: foundMatch ? foundMatch.confidence : 100,
+      matchMethod: foundMatch ? foundMatch.method : 'not_found',
+      businessName,
+      placeId: placeId || null,
+      keyword,
+      location: location || '',
+      matchedName: foundMatch ? foundMatch.name : null,
+      rating: foundMatch ? foundMatch.rating : null,
+      reviewCount: foundMatch ? foundMatch.reviewCount : null,
+      timestamp: Date.now(),
+      pagesChecked: currentPage
+    };
+    
+    try {
+      const resultKey = `ranking_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      await chrome.storage.local.set({ [resultKey]: resultData });
+    } catch (e) {}
+    
+    try {
+      if (foundMatch) {
+        await chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: '✅ Business Found!',
+          message: `Rank #${foundMatch.position}\n"${foundMatch.name}"`
+        });
+      }
+    } catch (e) {}
+    
+    try {
+      chrome.runtime.sendMessage({ action: 'rankingCheckComplete', data: resultData });
+    } catch (e) {}
+    
+    sendResponse({ success: true, data: resultData });
+    
+  } catch (error) {
+    log('ERROR', 'Check failed', { error: error.message });
+    
+    sendLiveProgress({
+      status: 'error',
+      message: `Error: ${error.message}`,
+      currentPage: 0,
+      totalBusinesses: 0,
+      businesses: []
+    });
+    
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+// ============================================
+// BULK MODE WITH VISIBLE WINDOW
+// ============================================
+
+async function handleBulkRankingCheck(data, sendResponse) {
+  const { businessName, placeId, keywords, location } = data;
+  
+  log('INFO', '📦 Starting BULK (LOCAL SEARCH)', { 
+    business: businessName,
+    keywordCount: keywords.length 
+  });
+
+  if (bulkOperationInProgress) {
+    sendResponse({ success: false, error: 'Bulk already in progress' });
+    return;
+  }
+
+  bulkOperationInProgress = true;
+  bulkQueue = keywords;
+  processedCount = 0;
+  await saveState();
+
+  try {
+    sendResponse({ success: true, message: 'Bulk started with local search' });
+
+    const results = [];
+    
+    const initialWarmup = randomBetween(10000, 20000);
+    log('INFO', `👤 Warming up: ${Math.round(initialWarmup/1000)}s`);
+    
+    await chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: '🚀 Bulk Starting (Local)',
+      message: 'Tracking local search rankings...'
+    }).catch(() => {});
+    
+    await new Promise(resolve => setTimeout(resolve, initialWarmup));
+
+    for (let i = 0; i < keywords.length; i++) {
+      if (!bulkOperationInProgress) {
+        break;
+      }
+
+      if (shouldTakeSessionBreak()) {
+        await takeSessionBreak();
+      }
+
+      const keyword = keywords[i].trim();
+      if (!keyword) continue;
+
+      log('INFO', `\n📊 [${i + 1}/${keywords.length}] "${keyword}"`);
+      notifyProgress(i + 1, keywords.length, keyword);
+
+      let retries = 0;
+      let success = false;
+      let resultData = null;
+
+      while (retries <= CONFIG.MAX_RETRIES && !success) {
+        try {
+          const searchQuery = keyword + (location ? ' ' + location : '');
+          let allBusinesses = [];
+          let currentPage = 1;
+          let foundMatch = null;
+          
+          while (!foundMatch && allBusinesses.length < CONFIG.MAX_RESULTS_TO_CHECK) {
+            const start = (currentPage - 1) * CONFIG.RESULTS_PER_PAGE;
+            
+            const { windowId, tabId } = await createVisibleIncognitoWindow(searchQuery, start);
+            
+            await simulateHumanDelay('reading');
+            
+            const html = await getHTMLFromTabWithCaptchaCheck(tabId, windowId, keyword);
+            
+            await closeIncognitoWindow(windowId);
+            
+            const pageBusinesses = extractBusinessesFromHTML(html, 'bulk');
+            
+            if (pageBusinesses.length === 0) break;
+            
+            const adjustedBusinesses = pageBusinesses.map(b => {
+              const absolutePosition = b.position + (currentPage - 1) * CONFIG.RESULTS_PER_PAGE;
+              const correctPage = Math.ceil(absolutePosition / CONFIG.RESULTS_PER_PAGE);
+              return { ...b, position: absolutePosition, page: correctPage };
+            });
+            
+            allBusinesses = allBusinesses.concat(adjustedBusinesses);
+            
+            const seen = new Set();
+            allBusinesses = allBusinesses.filter(b => {
+              const key = b.placeId || cleanName(b.name);
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            
+            const match = findBusinessMatch(adjustedBusinesses, businessName, placeId);
+            if (match) {
+              foundMatch = match;
+              log('INFO', `✅ Found at #${match.position}`);
+              break;
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, randomBetween(8000, 15000)));
+            currentPage++;
+          }
+          
+          resultData = {
+            found: !!foundMatch,
+            totalChecked: allBusinesses.length,
+            organicPosition: foundMatch ? foundMatch.position : null,
+            page: foundMatch ? foundMatch.page : null,
+            confidence: foundMatch ? foundMatch.confidence : 100,
+            matchMethod: foundMatch ? foundMatch.method : 'not_found',
+            businessName: businessName,
+            placeId: placeId || null,
+            keyword: keyword,
+            location: location || '',
+            matchedName: foundMatch ? foundMatch.name : null,
+            rating: foundMatch ? foundMatch.rating : null,
+            reviewCount: foundMatch ? foundMatch.reviewCount : null,
+            timestamp: Date.now(),
+            pagesChecked: currentPage
+          };
+          
+          const resultKey = `ranking_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          await chrome.storage.local.set({ [resultKey]: resultData });
+          
+          results.push(resultData);
+          success = true;
+
+        } catch (error) {
+          log('ERROR', `Failed: "${keyword}"`, { retry: retries, error: error.message });
+          retries++;
+          
+          if (retries <= CONFIG.MAX_RETRIES) {
+            await new Promise(resolve => setTimeout(resolve, 10000 * retries));
+          } else {
+            resultData = {
+              found: false,
+              organicPosition: null,
+              page: null,
+              confidence: 0,
+              matchMethod: 'error',
+              businessName: businessName,
+              placeId: placeId || null,
+              keyword: keyword,
+              location: location || '',
+              error: error.message,
+              timestamp: Date.now()
+            };
+            results.push(resultData);
+          }
+        }
+      }
+
+      processedCount++;
+      await saveState();
+
+      if (i < keywords.length - 1) {
+        const keywordDelay = randomBetween(CONFIG.MIN_DELAY_BETWEEN_REQUESTS, CONFIG.MAX_DELAY_BETWEEN_REQUESTS);
+        log('DEBUG', `👤 Delay: ${Math.round(keywordDelay/1000)}s`);
+        await new Promise(resolve => setTimeout(resolve, keywordDelay));
+      }
+    }
+
+    const ranked = results.filter(r => r.found).length;
+    const notRanked = results.length - ranked;
+    
+    await chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: '✅ Bulk Complete!',
+      message: `${ranked} ranked | ${notRanked} not ranked`
+    }).catch(() => {});
+    
+    chrome.runtime.sendMessage({
+      action: 'bulkComplete',
+      data: { total: results.length, ranked, notRanked, results }
+    }).catch(() => {});
+    
+    bulkOperationInProgress = false;
+    await saveState();
+
+  } catch (error) {
+    log('ERROR', 'Bulk failed', error);
+    bulkOperationInProgress = false;
+    await saveState();
+    
+    chrome.runtime.sendMessage({
+      action: 'bulkError',
+      data: { error: error.message }
+    }).catch(() => {});
+  }
+}
+
+// ============================================
+// ✅ HTML PARSING - LOCAL SEARCH MODE
+// ============================================
+
+function extractBusinessesFromHTML(html, mode = 'single') {
+  const businesses = [];
+  
+  html = html.replace(/<!--[\s\S]*?-->/g, '');
+  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  
+  // ✅ NEW: Parse LOCAL search results (tbm=lcl)
+  // Pattern 1: Local pack cards with rllt__details
+  const localPackPattern = /<div[^>]*class="[^"]*rllt__details[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+  let matches = [...html.matchAll(localPackPattern)];
+  
+  // Pattern 2: Broader local result cards
+  if (matches.length === 0) {
+    const altPattern = /<div[^>]*class="[^"]*VkpGBb[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+    matches = [...html.matchAll(altPattern)];
+  }
+  
+  log('DEBUG', `Found ${matches.length} local businesses (${mode})`);
+  
+  matches.forEach((match, index) => {
+    const cardHtml = match[1];
+    
+    // Extract business name - multiple patterns
+    const namePatterns = [
+      /<div[^>]*class="[^"]*OSrXXb[^"]*"[^>]*>(.*?)<\/div>/i,
+      /<span[^>]*class="[^"]*OSrXXb[^"]*"[^>]*>(.*?)<\/span>/i,
+      /<div[^>]*role="heading"[^>]*>(.*?)<\/div>/i,
+      /<h3[^>]*class="[^"]*qBF1Pd[^"]*"[^>]*>(.*?)<\/h3>/i,
+      /<div[^>]*class="[^"]*dbg0pd[^"]*"[^>]*>(.*?)<\/div>/i
+    ];
+    
+    let name = '';
+    for (const pattern of namePatterns) {
+      const nameMatch = cardHtml.match(pattern);
+      if (nameMatch && nameMatch[1]) {
+        name = decodeHtml(nameMatch[1].replace(/<[^>]*>/g, '').trim());
+        name = cleanBusinessName(name);
+        if (name.length > 2) break;
+      }
+    }
+    
+    // Extract place ID (data-cid)
+    let placeId = null;
+    const cidMatch = cardHtml.match(/data-cid="([^"]+)"/i);
+    if (cidMatch) placeId = cidMatch[1];
+    
+    // Extract rating
+    let rating = null;
+    const ratingPatterns = [
+      /(\d+\.?\d*)\s*<\/span>/,
+      /aria-label="[^"]*(\d+\.?\d*)\s*star/i,
+      /(\d+\.?\d*)\s*stars?/i
+    ];
+    for (const pattern of ratingPatterns) {
+      const ratingMatch = cardHtml.match(pattern);
+      if (ratingMatch) {
+        rating = parseFloat(ratingMatch[1]);
+        break;
+      }
+    }
+    
+    // Extract review count
+    let reviewCount = null;
+    const reviewPatterns = [
+      /\(([0-9,]+)\)/,
+      /([0-9,]+)\s*reviews?/i,
+      /reviews?[^>]*>([0-9,]+)</i
+    ];
+    for (const pattern of reviewPatterns) {
+      const reviewMatch = cardHtml.match(pattern);
+      if (reviewMatch) {
+        reviewCount = parseInt(reviewMatch[1].replace(/,/g, ''));
+        break;
+      }
+    }
+    
+    if (name) {
+      businesses.push({
+        position: index + 1,
+        name,
+        placeId,
+        rating,
+        reviewCount,
+        source: 'local_search'
+      });
+    }
+  });
+  
+  return businesses;
+}
+
+// ============================================
+// MATCHING
+// ============================================
+
+function findBusinessMatch(businesses, targetName, targetPlaceId) {
+  if (businesses.length === 0) return null;
+  
+  const targetClean = cleanName(targetName);
+  const targetFirstWord = targetClean.split(/\s+/)[0];
+  
+  if (targetPlaceId) {
+    const placeIdMatch = businesses.find(b => b.placeId === targetPlaceId);
+    if (placeIdMatch) {
+      return { ...placeIdMatch, confidence: 100, method: 'place_id_exact' };
+    }
+  }
+  
+  const exactMatch = businesses.find(b => cleanName(b.name) === targetClean);
+  if (exactMatch) {
+    return { ...exactMatch, confidence: 95, method: 'name_exact' };
+  }
+  
+  const firstWordMatches = businesses.filter(b => {
+    const bClean = cleanName(b.name);
+    const bFirstWord = bClean.split(/\s+/)[0];
+    return bFirstWord === targetFirstWord;
+  });
+  
+  if (firstWordMatches.length === 0) return null;
+  
+  const containsMatch = firstWordMatches.find(b => {
+    const bClean = cleanName(b.name);
+    return bClean.includes(targetClean) || targetClean.includes(bClean);
+  });
+  
+  if (containsMatch) {
+    return { ...containsMatch, confidence: 85, method: 'name_fuzzy' };
+  }
+  
+  if (firstWordMatches.length === 1) {
+    return { ...firstWordMatches[0], confidence: 80, method: 'name_fuzzy' };
+  }
+  
+  return null;
+}
+
+function cleanBusinessName(name) {
+  if (!name) return '';
+  return name.replace(/Ꮇy Ad Centre.*$/i, '').replace(/\s*Ad\s*$/i, '').replace(/Sponsored/gi, '').replace(/·.*$/i, '').trim();
+}
+
+function cleanName(name) {
+  if (!name) return '';
+  return name.toLowerCase().replace(/&/g, 'and').replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function decodeHtml(html) {
+  const entities = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&nbsp;': ' ' };
+  return html.replace(/&[#\w]+;/g, match => entities[match] || match);
+}
+
+// ============================================
+// OTHER HANDLERS
+// ============================================
+
+async function handleCancelBulk(sendResponse) {
+  bulkOperationInProgress = false;
+  bulkQueue = [];
+  processedCount = 0;
+  captchaSolvingInProgress = false;
+  currentCaptchaWindow = null;
+  
+  for (const windowId of activeIncognitoWindows) {
+    try {
+      await chrome.windows.remove(windowId);
+    } catch (e) {}
+  }
+  activeIncognitoWindows.clear();
+  activeSearchTabs.clear();
+  
+  await saveState();
+  sendResponse({ success: true, message: 'Cancelled' });
+}
+
+async function handleExportCSV(sendResponse) {
+  try {
+    const data = await chrome.storage.local.get(null);
+    const rankings = Object.values(data).filter(item => item && item.businessName && item.timestamp);
+
+    if (rankings.length === 0) {
+      sendResponse({ success: false, error: 'No data' });
+      return;
+    }
+
+    let csv = 'Business Name,Place ID,Keyword,Location,Position,Page,Confidence,Match Method,Rating,Reviews,Date\n';
+    
+    rankings.forEach(r => {
+      csv += `"${escapeCsv(r.businessName)}","${escapeCsv(r.placeId || '')}","${escapeCsv(r.keyword)}","${escapeCsv(r.location || '')}",`;
+      csv += `${r.organicPosition || 'Not Found'},${r.page || '1'},${r.confidence}%,${r.matchMethod},`;
+      csv += `${r.rating || 'N/A'},${r.reviewCount || 'N/A'},"${new Date(r.timestamp).toLocaleString()}"\n`;
+    });
+
+    chrome.runtime.sendMessage({
+      action: 'downloadCSV',
+      data: csv,
+      filename: `gmb_rankings_${Date.now()}.csv`
+    }).catch(() => {});
+
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+async function handleGetStats(sendResponse) {
+  try {
+    const data = await chrome.storage.local.get(null);
+    const rankings = Object.values(data).filter(item => item && item.businessName && item.timestamp);
+
+    const stats = {
+      totalChecks: rankings.length,
+      ranked: rankings.filter(r => r.organicPosition).length,
+      notRanked: rankings.filter(r => !r.organicPosition).length,
+      avgPosition: calculateAverage(rankings.map(r => r.organicPosition).filter(Boolean)),
+      lastCheck: rankings.length > 0 ? Math.max(...rankings.map(r => r.timestamp)) : null
+    };
+
+    sendResponse({ success: true, data: stats });
+  } catch (error) {
+    sendResponse({ success: false, error: error.message });
+  }
+}
+
+// ============================================
+// HELPERS
+// ============================================
+
+function notifyProgress(completed, total, currentKeyword) {
+  chrome.runtime.sendMessage({
+    action: 'bulkProgress',
+    data: { completed, total, keyword: currentKeyword, percentage: Math.round((completed / total) * 100) }
+  }).catch(() => {});
+}
+
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function calculateAverage(numbers) {
+  if (numbers.length === 0) return 0;
+  return Math.round(numbers.reduce((a, b) => a + b, 0) / numbers.length);
+}
+
+function escapeCsv(value) {
+  if (!value) return '';
+  return String(value).replace(/"/g, '""');
+}
+
+// ============================================
+// INITIALIZATION
+// ============================================
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: '🗺️ Local Search Mode!',
+      message: 'Now tracking Google Maps/Local search rankings!'
+    }).catch(() => {});
+  }
+});
+
+async function cleanupOldData() {
+  try {
+    const data = await chrome.storage.local.get(null);
+    const cutoffDate = Date.now() - (90 * 24 * 60 * 60 * 1000);
+    const keysToDelete = [];
+    
+    for (const [key, value] of Object.entries(data)) {
+      if (key.startsWith('ranking_') && value.timestamp && value.timestamp < cutoffDate) {
+        keysToDelete.push(key);
+      }
+    }
+    
+    if (keysToDelete.length > 0) {
+      await chrome.storage.local.remove(keysToDelete);
+      log('INFO', 'Cleaned old data', { deleted: keysToDelete.length });
+    }
+  } catch (e) {}
+}
+
+cleanupOldData();
+
+log('INFO', '✅ v5.7 Ready - 🗺️ Local Search Mode with Quick Track! 🚀');

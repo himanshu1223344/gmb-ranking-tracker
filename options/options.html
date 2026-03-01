@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GMB Ranking Tracker - Settings & Results</title>
+  <link rel="stylesheet" href="options.css">
+  <link rel="stylesheet" href="../styles/global.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo-icon">📍</div>
+        <div class="header-text">
+          <h1>GMB Ranking Tracker Pro</h1>
+          <p class="subtitle">Professional Google Maps Ranking Analytics</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="results" role="tab" aria-selected="true" aria-controls="results-tab">
+        <span class="tab-icon">📊</span>
+        All Results
+      </button>
+      <button class="tab" data-tab="businesses" role="tab" aria-selected="false" aria-controls="businesses-tab">
+        <span class="tab-icon">🏢</span>
+        My Businesses
+      </button>
+      <button class="tab" data-tab="settings" role="tab" aria-selected="false" aria-controls="settings-tab">
+        <span class="tab-icon">⚙️</span>
+        Settings
+      </button>
+      <button class="tab" data-tab="logs" role="tab" aria-selected="false" aria-controls="logs-tab">
+        <span class="tab-icon">📝</span>
+        Error Logs
+      </button>
+    </nav>
+
+    <!-- Tab Content -->
+    <main class="main-content">
+      
+      <!-- Results Tab -->
+      <div id="results-tab" class="tab-content active" role="tabpanel" aria-labelledby="results-tab">
+        <div class="tab-header">
+          <h2>All Ranking Results</h2>
+          <div class="tab-actions">
+            <input 
+              type="text" 
+              id="search-results" 
+              placeholder="Search business or keyword..." 
+              class="search-input"
+              aria-label="Search results">
+            <button id="export-all-btn" class="btn btn-primary" title="Export all results to CSV">
+              <span>💾</span>
+              <span>Export All</span>
+            </button>
+            <button id="clear-all-btn" class="btn btn-danger" title="Delete all ranking data">
+              <span>🗑️</span>
+              <span>Clear All</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="stats-cards">
+          <div class="stat-card">
+            <div class="stat-icon">🎯</div>
+            <div class="stat-value" id="total-checks">0</div>
+            <div class="stat-label">Total Checks</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">📈</div>
+            <div class="stat-value" id="avg-position">-</div>
+            <div class="stat-label">Avg Position</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-value" id="ranked-count">0</div>
+            <div class="stat-label">Ranked</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">❌</div>
+            <div class="stat-value" id="not-ranked-count">0</div>
+            <div class="stat-label">Not Ranked</div>
+          </div>
+        </div>
+
+        <!-- Results Table with Trend Column -->
+        <div class="table-wrapper">
+          <table id="results-table" class="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Business Name</th>
+                <th scope="col">Keyword</th>
+                <th scope="col">Location</th>
+                <th scope="col">Position</th>
+                <th scope="col">Trend</th>
+                <th scope="col">Page</th>
+                <th scope="col">Confidence</th>
+                <th scope="col">Date</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="results-tbody">
+              <tr>
+                <td colspan="9" class="loading-cell">
+                  <div class="loading"></div>
+                  <span>Loading results...</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Empty State -->
+        <div id="no-results-state" class="empty-state" style="display: none;">
+          <div class="empty-state-icon">📭</div>
+          <h3>No Results Yet</h3>
+          <p>Start your first ranking check to see results here</p>
+          <button id="start-check-btn" class="btn btn-primary">
+            <span>🚀</span>
+            <span>Start First Check</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ✅ PROFESSIONAL BUSINESSES TAB v6.2 -->
+      <div id="businesses-tab" class="tab-content" role="tabpanel" aria-labelledby="businesses-tab">
+        <div class="tab-header">
+          <div>
+            <h2>My Businesses</h2>
+            <p class="tab-subtitle">Manage tracked locations and keywords</p>
+          </div>
+          <button id="add-business-btn" class="btn btn-primary" title="Add a new business">
+            <span>➕</span>
+            <span>Add Business</span>
+          </button>
+        </div>
+
+        <div class="businesses-grid" id="businesses-grid">
+          <div class="loading-cell">
+            <div class="loading"></div>
+            <span>Loading businesses...</span>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="no-businesses-state" class="empty-state" style="display: none;">
+          <div class="empty-state-icon">🏢</div>
+          <h3>No Businesses Saved</h3>
+          <p>Add your first business to start tracking rankings</p>
+          <button class="btn btn-primary" onclick="document.getElementById('add-business-btn').click()">
+            <span>➕</span>
+            <span>Add Your First Business</span>
+          </button>
+        </div>
+
+        <!-- Add Business Modal -->
+        <div id="add-business-modal" class="modal" style="display: none;" role="dialog" aria-labelledby="modal-title" aria-modal="true">
+          <div class="modal-overlay"></div>
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3 id="modal-title">➕ Add New Business</h3>
+              <button class="close-modal" aria-label="Close modal">&times;</button>
+            </div>
+            <div class="modal-body">
+              <div class="form-group">
+                <label for="new-business-name">Business Name <span class="required">*</span></label>
+                <input 
+                  type="text" 
+                  id="new-business-name" 
+                  class="input-field" 
+                  placeholder="e.g., Dr. Tejaswini Patil - Gynaecologist"
+                  required>
+              </div>
+              <div class="form-group">
+                <label for="new-place-id">Place ID <span class="required">*</span></label>
+                <input 
+                  type="text" 
+                  id="new-place-id" 
+                  class="input-field" 
+                  placeholder="ChIJ... or 0x... or numeric CID"
+                  required>
+                <small class="help-text">Get this from Google Maps URL</small>
+              </div>
+              <div class="form-group">
+                <label for="new-location">Default Location</label>
+                <input 
+                  type="text" 
+                  id="new-location" 
+                  class="input-field"
+                  placeholder="e.g., Malad, Mumbai">
+              </div>
+              <div class="form-group">
+                <label for="new-keywords">Keywords (comma-separated)</label>
+                <textarea 
+                  id="new-keywords" 
+                  class="input-field"
+                  rows="3"
+                  placeholder="PCOD Treatment, Best Gynaecologist, IVF Treatment"></textarea>
+                <small class="help-text">Enter keywords you want to track for this business</small>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button id="save-business-btn" class="btn btn-primary">
+                <span>💾</span>
+                <span>Save Business</span>
+              </button>
+              <button class="btn btn-outline close-modal">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Tab -->
+      <div id="settings-tab" class="tab-content" role="tabpanel" aria-labelledby="settings-tab">
+        <div class="tab-header">
+          <h2>Extension Settings</h2>
+        </div>
+
+        <!-- Tracking Settings -->
+        <div class="settings-section">
+          <h3>⚡ Tracking Settings</h3>
+          
+          <div class="setting-item">
+            <label for="max-pages">
+              <span class="setting-label">Maximum Pages to Check</span>
+              <span class="setting-description">How many pages of results to scan (each page ≈ 20 businesses)</span>
+            </label>
+            <input 
+              type="number" 
+              id="max-pages" 
+              min="1" 
+              max="10" 
+              value="5" 
+              class="input-field"
+              aria-describedby="max-pages-desc">
+          </div>
+
+          <div class="setting-item">
+            <label for="delay-seconds">
+              <span class="setting-label">Delay Between Searches (seconds)</span>
+              <span class="setting-description">Wait time to avoid rate limiting by Google</span>
+            </label>
+            <input 
+              type="number" 
+              id="delay-seconds" 
+              min="3" 
+              max="15" 
+              value="5" 
+              class="input-field">
+          </div>
+
+          <div class="setting-item">
+            <label for="concurrent-tabs">
+              <span class="setting-label">Concurrent Tabs</span>
+              <span class="setting-description">Number of simultaneous checks (higher = faster but riskier)</span>
+            </label>
+            <input 
+              type="number" 
+              id="concurrent-tabs" 
+              min="1" 
+              max="5" 
+              value="3" 
+              class="input-field">
+          </div>
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="auto-schedule" class="checkbox-input">
+                <span class="setting-label">Enable Daily Automatic Checks</span>
+              </div>
+              <span class="setting-description">⏰ Automatically check rankings every 24 hours</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Data Management -->
+        <div class="settings-section">
+          <h3>💾 Data Management</h3>
+          
+          <div class="setting-item">
+            <label for="retention-days">
+              <span class="setting-label">Data Retention (days)</span>
+              <span class="setting-description">Automatically delete results older than this</span>
+            </label>
+            <input 
+              type="number" 
+              id="retention-days" 
+              min="7" 
+              max="365" 
+              value="90" 
+              class="input-field">
+          </div>
+
+          <div class="setting-item">
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              <button id="backup-data-btn" class="btn btn-outline" title="Download backup as JSON">
+                <span>📥</span>
+                <span>Backup All Data</span>
+              </button>
+              <button id="restore-data-btn" class="btn btn-outline" title="Restore from JSON backup">
+                <span>📤</span>
+                <span>Restore from Backup</span>
+              </button>
+            </div>
+            <input type="file" id="restore-file" accept=".json" style="display: none;" aria-label="Select backup file">
+          </div>
+        </div>
+
+        <!-- Advanced Options -->
+        <div class="settings-section">
+          <h3>🔧 Advanced Options</h3>
+          
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="debug-mode" class="checkbox-input">
+                <span class="setting-label">Enable Debug Mode</span>
+              </div>
+              <span class="setting-description">🐛 Log detailed information to browser console</span>
+            </label>
+          </div>
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="notifications" class="checkbox-input" checked>
+                <span class="setting-label">Enable Notifications</span>
+              </div>
+              <span class="setting-description">🔔 Show desktop notifications when checks complete</span>
+            </label>
+          </div>
+
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="visible-mode" class="checkbox-input" checked>
+                <span class="setting-label">Use Visible Window Mode</span>
+              </div>
+              <span class="setting-description">👁️ Open visible Chrome window (recommended for CAPTCHA solving)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Settings Actions -->
+        <div class="settings-actions">
+          <button id="save-settings-btn" class="btn btn-primary">
+            <span>💾</span>
+            <span>Save Settings</span>
+          </button>
+          <button id="reset-settings-btn" class="btn btn-outline">
+            <span>🔄</span>
+            <span>Reset to Default</span>
+          </button>
+        </div>
+
+        <!-- Save Confirmation -->
+        <div id="settings-saved-toast" class="toast success" style="display: none;">
+          <span>✅</span>
+          <span>Settings saved successfully!</span>
+        </div>
+      </div>
+
+      <!-- Error Logs Tab -->
+      <div id="logs-tab" class="tab-content" role="tabpanel" aria-labelledby="logs-tab">
+        <div class="tab-header">
+          <h2>Error Logs</h2>
+          <div class="tab-actions">
+            <button id="export-logs-btn" class="btn btn-outline" title="Export logs to file">
+              <span>💾</span>
+              <span>Export Logs</span>
+            </button>
+            <button id="clear-logs-btn" class="btn btn-danger" title="Clear all error logs">
+              <span>🗑️</span>
+              <span>Clear Logs</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="logs-container" id="logs-container">
+          <div class="loading-cell">
+            <div class="loading"></div>
+            <span>Loading error logs...</span>
+          </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="no-logs-state" class="empty-state" style="display: none;">
+          <div class="empty-state-icon">✅</div>
+          <h3>No Errors Found</h3>
+          <p>Your extension is running smoothly!</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-content">
+        <div class="footer-left">
+          <span class="footer-version">🗺️ GMB Ranking Tracker Pro v6.2</span>
+          <span class="footer-separator">•</span>
+          <span class="footer-mode">Professional UI + Historical Tracking</span>
+        </div>
+        <div class="footer-right">
+          <a href="#" id="documentation-link" class="footer-link">📖 Documentation</a>
+          <a href="#" id="support-link" class="footer-link">💬 Support</a>
+          <a href="#" id="about-link" class="footer-link">ℹ️ About</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
