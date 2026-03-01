@@ -1,6 +1,7 @@
 from flask import Flask
 import threading
-from bot import main as bot_main
+import asyncio
+import os
 
 app = Flask(__name__)
 
@@ -9,11 +10,10 @@ def home():
     return "GMB Ranking Tracker is Running ✅"
 
 def run_bot():
-    bot_main()
+    from bot import main
+    asyncio.run(main())
 
-# Start bot in background thread
-t = threading.Thread(target=run_bot)
-t.daemon = True
+t = threading.Thread(target=run_bot, daemon=True)
 t.start()
 
 if __name__ == '__main__':
