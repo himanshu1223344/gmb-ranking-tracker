@@ -1,7 +1,8 @@
 import os
 import logging
+import asyncio
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes
 from scraper import check_ranking
 
 logging.basicConfig(level=logging.INFO)
@@ -29,17 +30,24 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⏳ Checking '{keyword}' for {website}...")
         position = check_ranking(keyword, website)
         if position:
-            await update.message.reply_text(f"✅ {website}\nKeyword: {keyword}\nPosition: #{position}")
+            await update.message.reply_text(
+                f"✅ Result Found!\n"
+                f"🌐 Website: {website}\n"
+                f"🔑 Keyword: {keyword}\n"
+                f"📍 Position: #{position}"
+            )
         else:
-            await update.message.reply_text(f"❌ {website} not found in top 100 results for '{keyword}'")
+            await update.message.reply_text(
+                f"❌ {website} not found in top 100 for '{keyword}'"
+            )
     except Exception as e:
         await update.message.reply_text(f"Error: {str(e)}")
 
 def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("check", check))
-    app.run_polling()
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("check", check))
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
